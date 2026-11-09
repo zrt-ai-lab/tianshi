@@ -1,0 +1,4 @@
+# 天市：把插件行插入 web profile 的插件树。
+- insert:
+    - id: tianshi
+      name: 'dsh-tianshi'
