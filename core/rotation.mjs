@@ -173,6 +173,7 @@ export async function fetchRotation() {
     at: new Date().toISOString(),
     industry: ind,
     concept: con,
+    boards: [...industry, ...concept],
     summary: summarizeRotation(ind, con),
     method: '四象限按 60 日与 5 日涨跌减去全部板块中位数划分（±8 / ±2 个百分点）；资金为东方财富按单笔金额划分的主力净额',
   };

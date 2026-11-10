@@ -554,9 +554,16 @@
   .nav-badge{margin-left:auto;font-size:10.5px;color:var(--cap);font-weight:400}
   .nav-item[data-on="1"] .nav-badge{color:#A87925}
   /* 连板梯队整页 */
-  .lv-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;align-items:start}
+  /* Each ladder level uses the available width; members reflow inside it. */
+  .lv-cols{display:flex;flex-direction:column;gap:14px;min-width:0}
+  .lv-level{width:100%;min-width:0}
+  .lv-members{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:8px;padding:10px}
+  .lv-members .lv-item{min-width:0;border:1px solid var(--border-soft);border-radius:9px;align-content:start;background:var(--layer)}
+  .lv-members .lv-item:last-child{border-bottom:1px solid var(--border-soft)}
+  .lv-members .lv-item .nm{white-space:normal;overflow:visible;overflow-wrap:anywhere;line-height:1.5}
+  .lv-members .lv-item .sub{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.7;overflow-wrap:anywhere}
   .lv-col{border:1px solid var(--border-soft);border-radius:var(--r-m);background:var(--layer);overflow:hidden}
-  .lv-head{display:flex;align-items:baseline;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-soft);background:var(--surface2)}
+  .lv-head{display:flex;align-items:baseline;gap:5px 8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border-soft);background:var(--surface2)}
   .lv-head b{font-size:13px}
   .lv-item{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:7px 12px;border-bottom:1px solid var(--border-soft);cursor:pointer}
   .lv-item:last-child{border-bottom:0}
@@ -1534,7 +1541,15 @@
   }
   /* 交易流水：买入/卖出会更新持仓加权成本 */
   function getTrades() { return storeGet('trades', []); }
+  function validateTrade(t, pos) {
+    if (!t || !['buy', 'sell'].includes(t.side)) throw new Error('请选择买入或卖出');
+    if (!Number.isFinite(t.price) || t.price <= 0) throw new Error('成交价必须是正数');
+    if (!Number.isSafeInteger(t.qty) || t.qty <= 0) throw new Error('成交股数必须是正整数');
+    var held = pos && Number.isSafeInteger(pos.qty) ? pos.qty : 0;
+    if (t.side === 'sell' && t.qty > held) throw new Error('卖出最多 ' + held + ' 股，不能超过当前记录持仓');
+  }
   function addTrade(t) {
+    validateTrade(t, getPosition(t.symbol));
     var all = getTrades();
     all.unshift(t);
     storeSet('trades', all.slice(0, 500));
@@ -1545,7 +1560,7 @@
       pos.cost = newQty > 0 ? (pos.cost * pos.qty + t.price * t.qty) / newQty : t.price;
       pos.qty = newQty;
     } else {
-      pos.qty = Math.max(0, pos.qty - t.qty);
+      pos.qty = pos.qty - t.qty;
       if (pos.qty === 0) pos.cost = 0;
     }
     setPosition(t.symbol, pos.qty > 0 ? pos : null);
@@ -1931,6 +1946,25 @@
 
   }
 
+  function paintRegulatoryEvidence(box, symbol) {
+    var card = document.createElement('details'); card.className = 'card';
+    var head = document.createElement('summary'); head.textContent = '监管与异动观察 · 正在核查公告'; head.style.cssText = 'cursor:pointer;font-family:var(--sans);font-size:12px';
+    card.appendChild(head); box.appendChild(card);
+    api('/regulatory?symbol=' + encodeURIComponent(symbol)).then(function (r) {
+      if (!r || !r.ok) { head.textContent = '监管与异动观察 · 数据暂不可用'; return; }
+      head.textContent = '监管与异动观察 · ' + r.status;
+      var notice = document.createElement('p'); notice.className = 'caveat'; notice.textContent = r.caveat; card.appendChild(notice);
+      (r.notices || []).forEach(function (n) {
+        var row = document.createElement('p'); row.style.cssText = 'margin:7px 0;font-size:11.5px';
+        if (n.url) { var a = document.createElement('a'); a.href = n.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = n.date + ' · ' + n.title; row.appendChild(a); }
+        else row.textContent = n.date + ' · ' + n.title;
+        card.appendChild(row);
+      });
+      var title = document.createElement('strong'); title.textContent = '可能的情景，不是主力意图认定'; card.appendChild(title);
+      (r.scenarios || []).forEach(function (text) { var p = document.createElement('p'); p.style.cssText = 'margin:6px 0;font-size:11.5px;line-height:1.6'; p.textContent = text; card.appendChild(p); });
+    }).catch(function () { head.textContent = '监管与异动观察 · 接口尚不可用，不判断监管状态'; });
+  }
+
   /* ── Tab 1：决策 ── */
   function paintDecision(box, p, d, r) {
     // This renderer is not nested in renderRight: keep its view model local.
@@ -1946,6 +1980,7 @@
 
     /* ⓿ 今日盘面：分时表现、资金、做T 一屏看完 */
     paintTodayBoard(box, p);
+    paintRegulatoryEvidence(box, p.symbol);
 
     /* ① 持仓建议（后端结合成本算的） */
     var pa = p.position_advice;
@@ -4633,6 +4668,7 @@
   }
 
   var ladderExpanded = {};
+  var ladderGrouping = 'concept';
   function paintLadderView(L) {
     var v = $('ladderView');
     if (!v) return;
@@ -4681,13 +4717,31 @@
             '</div>';
         }).join('') + '</div></div>';
     }
+    // 行业热度、各高度分布及实际晋级：不输出未经验证的明日概率。
+    var groupedLadders = ladderGrouping === 'concept' ? L.concept_ladders : L.sector_ladders;
+    html += '<div style="display:flex;gap:8px"><button data-ladder-group="concept">概念热点</button><button data-ladder-group="industry">所属行业</button></div>';
+    if (ladderGrouping === 'concept') html += '<div class="caveat">' + (L.concept_note || '概念关联需要新版后端数据，当前不可用') + ' · 取数失败 ' + (L.concept_membership_failures == null ? '—' : L.concept_membership_failures) + ' 只</div>';
+    if (groupedLadders && groupedLadders.length) {
+      html += '<section><div class="lv-head"><b>' + (ladderGrouping === 'concept' ? '概念热点' : '行业热度') + ' · 接力条件</b><span style="font-size:10.5px;color:var(--cap)">按涨停家数排序，不是明日胜率</span></div>' +
+        '<div class="lv-members">' + groupedLadders.map(function (g) {
+          var b = g.rotation;
+          return '<article class="card" style="min-width:0;margin:0"><div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap"><b>' + g.industry + '</b><span style="font-size:11px;color:var(--warn)">' + g.tier + '</span></div>' +
+            '<div style="font-size:11px;margin-top:5px">' + g.count + ' 只涨停 · 最高 ' + g.max_boards + ' 板 · ' + g.cycle + '</div>' +
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:7px 0">' + g.levels.map(function (lv) { return '<span style="font-family:var(--sans);font-size:10px;border:1px solid var(--border-soft);padding:2px 5px;border-radius:5px;color:' + (lv.stocks.length ? 'var(--fg2)' : 'var(--cap)') + '">' + lv.boards + '板 ' + lv.stocks.length + '</span>'; }).join('') + '</div>' +
+            (b ? '<div style="font-size:11px;color:var(--fg3)">行业今日 ' + (b.r1 == null ? '—' : b.r1 + '%') + ' · 5日 ' + (b.r5 == null ? '—' : b.r5 + '%') + ' · 60日 ' + (b.r60 == null ? '—' : b.r60 + '%') + '</div>' : '') +
+            '<div style="font-size:11px;margin:5px 0;color:var(--fg2)">' + (g.promotion.length ? g.promotion.map(function (p) { return p.from + '→' + p.to + '：' + p.advanced + '/' + p.base + '（' + (p.rate == null ? '缺数据' : p.rate + '%') + '）'; }).join('；') : '昨日样本不足，暂无可比晋级率') + '</div>' +
+            '<div style="font-size:11px;line-height:1.6">' + g.reasons.map(function (x) { return '· ' + x; }).join('<br>') + '</div>' +
+            '<div class="caveat">' + g.risks.join('；') + '</div>' +
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">' + g.levels.flatMap(function (lv) { return lv.stocks.map(function (x) { return '<button data-sector-stock="' + x.code + '" style="border:1px solid var(--border);background:var(--layer);font-size:11px;padding:3px 6px;cursor:pointer">' + x.name + ' · ' + lv.boards + '板</button>'; }); }).join('') + '</div></article>';
+        }).join('') + '</div><div class="caveat">' + L.sector_note + '</div></section>';
+    }
     // 各层
     html += '<div class="lv-cols">' + (ld.levels || []).map(function (lv) {
       var limit = ladderExpanded[lv.boards] ? lv.items.length : 10;
       var items = lv.items.slice(0, limit);
-      return '<div class="lv-col"><div class="lv-head"><b class="' + (lv.boards >= 3 ? 'up' : '') + '">' + lv.label + '</b>' +
+      return '<section class="lv-col lv-level"><div class="lv-head"><b class="' + (lv.boards >= 3 ? 'up' : '') + '">' + lv.label + '</b>' +
         '<span style="font-size:11px;color:var(--cap)">' + lv.count + ' 只</span>' +
-        '<span style="margin-left:auto;font-size:10px;color:var(--cap)">按妖股潜质排序</span></div>' +
+        '<span style="margin-left:auto;font-size:10px;color:var(--cap)">按妖股潜质排序</span></div><div class="lv-members">' +
         items.map(function (it) {
           var sc = it.monster ? it.monster.score : 0;
           var col = sc >= 75 ? 'var(--up)' : sc >= 60 ? 'var(--warn)' : 'var(--cap)';
@@ -4700,10 +4754,10 @@
               (it.broken ? ' · <span style="color:var(--warn)">炸板 ' + it.broken + ' 次</span>' : '') +
               ' · ' + (it.price != null ? it.price + ' 元' : '') + (it.float_cap ? ' · ' + (it.float_cap / 1e8).toFixed(0) + ' 亿' : '') + '</span>' +
             '</div>';
-        }).join('') +
+        }).join('') + '</div>' +
         (lv.items.length > 10 ? '<div class="lv-more" data-lv="' + lv.boards + '">' + (ladderExpanded[lv.boards] ? '收起' : '展开全部 ' + lv.items.length + ' 只') + '</div>' : '') +
         (lv.count > lv.items.length ? '<div style="padding:6px 12px;font-size:10.5px;color:var(--cap)">另有 ' + (lv.count - lv.items.length) + ' 只未列出</div>' : '') +
-        '</div>';
+        '</section>';
     }).join('') + '</div>';
     html += '<div class="caveat">潜质分是封板时间、封单、连板高度、价格、市值、换手、炸板等量价特征的相似度，不是涨跌预测。</div>';
     // 妖股潜质榜与跨年窗口原先在首页，现在并入本页（与梯队同源，避免首页重复）
@@ -4711,6 +4765,8 @@
     v.innerHTML = html;
     var mb = v.querySelector('#lvMonster');
     if (mb) renderMonsterPanel(mb);
+    Array.prototype.forEach.call(v.querySelectorAll('[data-ladder-group]'), function (b) { b.addEventListener('click', function () { ladderGrouping = b.getAttribute('data-ladder-group'); paintLadderView(L); }); });
+    Array.prototype.forEach.call(v.querySelectorAll('[data-sector-stock]'), function (b) { b.addEventListener('click', function () { load(b.getAttribute('data-sector-stock')); }); });
     Array.prototype.forEach.call(v.querySelectorAll('.lv-item[data-code]'), function (row) {
       row.addEventListener('click', function () { setView('market'); load(row.getAttribute('data-code')); });
     });
@@ -4751,7 +4807,7 @@
         renderMarket(m);
         // 首页只在第一次拿到大盘数据时完整渲染；之后的定时刷新只更新顶部大盘栏，
         // 否则每分钟（以及每次重新打开）都会把首页推倒重画，看起来像「又刷新了一次」。
-        if (!state.symbol && !homeRenderedOk && currentView !== 'monsters' && currentView !== 'portfolio') idle();
+        if (!state.symbol && !homeRenderedOk && currentView === 'market') idle();
       }
       else { marketState = { ok: false, __err: (m && (m.error || m.__err)) || '接口无数据' }; renderMarket(marketState); }
     }).catch(function (e) {
@@ -5034,19 +5090,20 @@
       }
 
       /* 交易流水 */
+
       html += '<div style="font-size:11.5px;font-weight:600;margin:18px 0 6px">交易流水 <span style="color:var(--cap);font-weight:400">最近 ' + trades.length + ' 笔</span></div>';
       if (!trades.length) {
         html += '<div style="border:1px solid var(--border-soft);border-radius:var(--r-m);padding:18px;color:var(--cap);font-size:11.5px">还没有交易记录。持仓表里点「记一笔」。</div>';
       } else {
         html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;border:1px solid var(--border-soft);border-radius:var(--r-m);overflow:hidden">';
-        trades.forEach(function (t) {
+        trades.forEach(function (t, tradeIndex) {
           var sideCls = t.side === 'buy' ? 'up' : 'down';
           html += '<tr style="border-top:1px solid var(--border-soft)">' +
             '<td style="padding:7px 10px;color:var(--cap);font-family:var(--mono);font-size:10.5px">' + new Date(t.at).toLocaleString('zh-CN', { hour12: false }) + '</td>' +
             '<td style="padding:7px 10px">' + (t.name || t.symbol) + '</td>' +
             '<td style="padding:7px 10px" class="' + sideCls + '">' + (t.side === 'buy' ? '买入' : '卖出') + '</td>' +
             '<td style="text-align:right;padding:7px 10px;font-family:var(--mono)">' + t.price + ' × ' + t.qty + '</td>' +
-            '<td style="text-align:right;padding:7px 10px;font-family:var(--mono)">' + (t.price * t.qty).toFixed(0) + ' 元</td></tr>';
+            '<td style="text-align:right;padding:7px 10px;font-family:var(--mono)">' + (t.price * t.qty).toFixed(0) + ' 元</td><td><button data-void-trade="' + tradeIndex + '" style="font-size:11px;color:var(--warn);background:transparent;border:0;cursor:pointer">撤销错误记录</button></td></tr>';
         });
         html += '</table>';
       }
@@ -5101,6 +5158,17 @@
       html += '</div>';
       pv.innerHTML = html;
 
+      pv.querySelectorAll('[data-void-trade]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var all = getTrades(), index = Number(b.dataset.voidTrade), t = all[index];
+          if (!t || !confirm('撤销这笔错误记录？会先备份并从复盘中排除。不会盲目反加股数；请随后按实际余额核对持仓。')) return;
+          try {
+            localStorage.setItem('tianshi.tradeBackup.' + Date.now(), JSON.stringify({ trades: all, positions: storeGet('positions', {}) }));
+            all.splice(index, 1); localStorage.setItem('tianshi.trades', JSON.stringify(all));
+            toast('错误流水已撤销并备份，请核对实际持仓'); renderPortfolio();
+          } catch (e) { toast('备份或撤销失败，未继续操作'); }
+        });
+      });
       pv.querySelectorAll('[data-open]').forEach(function (a) {
         a.addEventListener('click', function (e) { e.preventDefault(); setView('market'); load(a.getAttribute('data-open')); });
       });
@@ -5135,6 +5203,16 @@
       '<div style="display:flex;gap:8px">' +
       '<button id="tCancel" style="flex:1;height:30px;border:1px solid var(--border);background:transparent;cursor:pointer;border-radius:var(--r-s);font-size:12px;color:var(--fg3)">取消</button>' +
       '<button id="tSave" style="flex:1;height:30px;border:0;background:linear-gradient(180deg,rgba(232,180,76,.95),rgba(214,158,44,.95));color:#0A1020;cursor:pointer;border-radius:var(--r-s);font-size:12px;font-weight:650">保存</button></div>';
+    var info = document.createElement('div'); info.id = 'tHolding'; info.style.cssText = 'font-size:12px;color:var(--fg2);margin-bottom:8px';
+    card.insertBefore(info, card.querySelector('#tPrice'));
+    var shortcuts = document.createElement('div'); shortcuts.id = 'tFractions'; shortcuts.style.cssText = 'display:none;gap:6px;margin-bottom:10px';
+    shortcuts.innerHTML = '<button type="button" data-fraction="0.25">1/4仓</button><button type="button" data-fraction="0.5">半仓</button><button type="button" data-fraction="1">全部卖出</button>';
+    var note = document.createElement('p'); note.style.cssText = 'font-size:11px;color:var(--fg3);line-height:1.5;margin:0 0 10px';
+    note.textContent = '仅记录实际成交。买入不以现有持仓作上限；卖出不得超过记录持仓。券商可卖数量、T+1限制请另行核对。';
+    var err = document.createElement('div'); err.id = 'tTradeError'; err.setAttribute('role', 'alert'); err.style.cssText = 'color:var(--up);font-size:12px;margin-bottom:8px';
+    var footer = card.querySelector('#tCancel').parentElement;
+    card.insertBefore(shortcuts, footer); card.insertBefore(note, footer); card.insertBefore(err, footer);
+    var qtyInput = card.querySelector('#tQty'); qtyInput.type = 'number'; qtyInput.min = '1'; qtyInput.step = '1';
     wrap.appendChild(card);
     document.body.appendChild(wrap);
     var side = 'buy';
@@ -5148,12 +5226,31 @@
       card.querySelector('#tSell').style.background = '#111'; card.querySelector('#tSell').style.color = '#fff';
       card.querySelector('#tBuy').style.background = 'transparent'; card.querySelector('#tBuy').style.color = 'var(--fg2)';
     });
+    function updateTradeLimit() {
+      var current = getPosition(symbol), held = current ? current.qty : 0;
+      info.textContent = '当前记录持仓：' + held + ' 股' + (side === 'sell' ? ' · 最多卖出 ' + held + ' 股' : '');
+      if (side === 'sell') qtyInput.max = held; else qtyInput.removeAttribute('max');
+      shortcuts.style.display = side === 'sell' ? 'flex' : 'none'; err.textContent = '';
+      card.querySelector('#tSave').disabled = side === 'sell' && held <= 0;
+    }
+    card.querySelector('#tBuy').addEventListener('click', updateTradeLimit);
+    card.querySelector('#tSell').addEventListener('click', updateTradeLimit);
+    shortcuts.querySelectorAll('button').forEach(function (b) {
+      b.style.cssText = 'flex:1;border:1px solid var(--border);background:var(--surface2);height:27px;color:var(--fg2);cursor:pointer;font-size:11px';
+      b.addEventListener('click', function () {
+        var current = getPosition(symbol), held = current ? current.qty : 0, fraction = Number(b.dataset.fraction);
+        qtyInput.value = fraction === 1 ? held : Math.floor(held * fraction / 100) * 100;
+        err.textContent = '';
+      });
+    });
+    updateTradeLimit();
     card.querySelector('#tCancel').addEventListener('click', function () { document.body.removeChild(wrap); });
     card.querySelector('#tSave').addEventListener('click', function () {
       var price = parseFloat(card.querySelector('#tPrice').value);
-      var qty = parseFloat(card.querySelector('#tQty').value);
-      if (!(price > 0) || !(qty > 0)) { toast('请输入有效价格和股数', true); return; }
-      addTrade({ symbol: symbol, name: (state.card && state.card.name) || symbol, side: side, price: price, qty: qty, at: Date.now() });
+      var qty = Number(card.querySelector('#tQty').value);
+      try {
+        addTrade({ symbol: symbol, name: (state.card && state.card.symbol === symbol && state.card.name) || symbol, side: side, price: price, qty: qty, at: Date.now() });
+      } catch (e) { err.textContent = e.message; return; }
       document.body.removeChild(wrap);
       toast('已记录' + (side === 'buy' ? '买入' : '卖出'));
       renderPortfolio();

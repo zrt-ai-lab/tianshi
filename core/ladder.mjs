@@ -43,6 +43,7 @@ export async function fetchPool(dateStr) {
     return list.map((x) => ({
       code: String(x.c ?? ''),
       name: x.n ?? '',
+      industry: typeof x.hybk === 'string' && x.hybk.trim() ? x.hybk.trim() : null,
       price: isNum(x.p) ? Number((x.p / 1000).toFixed(2)) : null,
       pct: isNum(x.zdp) ? x.zdp : null,
       amount: x.amount ?? null,
