@@ -310,7 +310,7 @@ export function summarizeRootCause(rc) {
   } else if (on.domestic) {
     L.push(`【产业链定位】无明显海外映射，${on.domestic.reason}`);
   }
-  if (!rc.ok) { L.push(`【根因链路】${rc.reason}`); return L.join('\n'); }
+  if (!rc.ok || rc.engine_ok === false || !rc.links) { L.push(`【根因链路】${rc.reason || '数据不足，不能归因'}`); return L.join('\n'); }
   const lk = rc.links;
   L.push(`【链路实测（近 ${rc.window} 日）】对${lk.market.name} β=${lk.market.beta}（r=${lk.market.corr}）` +
     (lk.sector ? `；对${lk.sector.name}超额 β=${lk.sector.beta}（r=${lk.sector.corr}，${lk.sector.significant ? '显著' : '不显著'}）` : '；板块环节缺失') +

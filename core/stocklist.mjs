@@ -12,6 +12,20 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 C
 let cache = { at: 0, items: [] };
 const TTL_MS = 30 * 60 * 1000;
 
+/* 常用标的别名：东财全量名录接口只有代码/名称，不返回全拼；这些高频别名保证用户输入全拼也能命中。
+ * 东财 suggest 返回的 PinYin 仍优先使用，别名只是兜底，不编造股票名称。 */
+const COMMON_PINYIN = {
+  '600519': ['gzmt','guizhoumaotai','maotai'], '600900': ['cjdly','changjiangdianli'],
+  '688981': ['zgj','zhongxinguoji'], '688220': ['ajkj','aaojiekeji','aojiekeji'],
+  '002242': ['jy','jiuyang'], '002578': ['mfl y'.replace(/ /g,''),'minfaly'],
+  '300750': ['ndsd','ningdeshidai'], '002594': ['b y d'.replace(/ /g,''),'byd'],
+  '600036': ['zs y','zhaoshangyinhang'].map(x=>x.replace(/ /g,'')),
+  '601318': ['zgpa','zhongguopingan'], '000001': ['szfzh','shenzhengfazhan'],
+  '000858': ['w l y','wuliangye'].map(x=>x.replace(/ /g,'')),
+};
+const aliasFor = code => COMMON_PINYIN[code] || [];
+
+
 /** 拉取全 A 股名录（约 5500 只） */
 export async function fetchAllStocks() {
   if (cache.items.length && Date.now() - cache.at < TTL_MS) return cache.items;
@@ -46,7 +60,7 @@ export async function fetchAllStocks() {
         const code = String(r.f12 ?? '');
         const name = String(r.f14 ?? '');
         if (!/^\d{6}$/.test(code) || !name) continue;
-        items.push({ code, name });
+        items.push({ code, name, aliases: aliasFor(code) });
       }
     };
     collect(first.rows);
@@ -74,9 +88,10 @@ export function localSearch(all, keyword, limit = 12) {
     const code = s.code;
     const name = s.name;
     const lowerName = name.toLowerCase();
-    if (code === q) { exact.push(s); continue; }
-    if (code.startsWith(q) || lowerName.startsWith(q)) { prefix.push(s); continue; }
-    if (lowerName.includes(q) || code.includes(q)) contains.push(s);
+    const aliases = (s.aliases || []).map(x => String(x).toLowerCase());
+    if (code === q || aliases.includes(q)) { exact.push(s); continue; }
+    if (code.startsWith(q) || lowerName.startsWith(q) || aliases.some(x => x.startsWith(q))) { prefix.push(s); continue; }
+    if (lowerName.includes(q) || code.includes(q) || aliases.some(x => x.includes(q))) contains.push(s);
     if (prefix.length + contains.length + exact.length >= limit * 4) continue;
   }
   return [...exact, ...prefix, ...contains].slice(0, limit);

@@ -1,20 +1,20 @@
-# 天市 v0.0.2 · 安装与发布
+# 天市 v0.0.3 · 安装与发布
 
 ## 给朋友安装（推荐）
 
-发送本次构建的 `dsh-tianshi-0.0.2.tgz`，不用发送整个工程。
+发送本次构建的 `dsh-tianshi-0.0.3.tgz`，不用发送整个工程。
 
 已将 dsh 加入 PATH 时：
 
 ```bash
-dsh plugin --profile desktop add /absolute/path/dsh-tianshi-0.0.2.tgz
+dsh plugin --profile desktop add /absolute/path/dsh-tianshi-0.0.3.tgz
 ```
 
 macOS 的 Harness 内置 CLI：
 
 ```bash
 "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
-  plugin --profile desktop add /absolute/path/dsh-tianshi-0.0.2.tgz
+  plugin --profile desktop add /absolute/path/dsh-tianshi-0.0.3.tgz
 ```
 
 路径含空格请加引号。profile 应选对方实际使用的配置；桌面常见为 desktop。Windows/Linux 使用自己的 dsh CLI 路径，以上 macOS 路径不适用。

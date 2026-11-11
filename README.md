@@ -1,4 +1,4 @@
-# 天市 · v0.0.2
+# 天市 · v0.0.3
 
 > 天市垣，三垣之一。
 > 古人把天上的市集命名于此，垣内星官有帝座、市楼、车肆、列肆、帛度。
@@ -44,20 +44,20 @@ A股个股与市场研究台（DeepSeek Harness 插件）。
 推荐安装固定版本的 Release 包：
 
 ```bash
-dsh plugin --profile desktop add https://github.com/zrt-ai-lab/tianshi/releases/download/v0.0.2/dsh-tianshi-0.0.2.tgz
+dsh plugin --profile desktop add https://github.com/zrt-ai-lab/tianshi/releases/download/v0.0.3/dsh-tianshi-0.0.3.tgz
 ```
 
 macOS 没有配置 `dsh` 命令时：
 
 ```bash
 "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
-  plugin --profile desktop add https://github.com/zrt-ai-lab/tianshi/releases/download/v0.0.2/dsh-tianshi-0.0.2.tgz
+  plugin --profile desktop add https://github.com/zrt-ai-lab/tianshi/releases/download/v0.0.3/dsh-tianshi-0.0.3.tgz
 ```
 
 也可直接安装固定 Git 标签：
 
 ```bash
-dsh plugin --profile desktop add github:zrt-ai-lab/tianshi#v0.0.2
+dsh plugin --profile desktop add github:zrt-ai-lab/tianshi#v0.0.3
 ```
 
 安装后完全退出 Harness 再打开。profile 示例为 desktop，请以实际使用配置为准。AI分析沿用安装者自己的模型和额度。
@@ -75,7 +75,7 @@ ETF观察不附带开发者的分享码，需自行配置。记录主要保存�
 仅供研究学习，不构成投资建议。
 
 
-## v0.0.2 更新
+## v0.0.3 更新
 
 - 交易记录校验：禁止超持仓卖出、全部卖出与分仓快捷数量、错误流水备份撤销。
 - 连板梯队自适应卡片，行业/概念热点切换，真实晋级结果与轮动关联。
