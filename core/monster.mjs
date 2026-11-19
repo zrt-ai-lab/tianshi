@@ -1,3 +1,8 @@
+import { fetchSinaUniverse, fetchTencentBars } from './market-fallbacks.mjs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { emJson, emText } from './http.mjs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 /**
  * 妖股阶段扫描器
  *
@@ -21,13 +26,7 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 C
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 
 async function getJson(url, timeoutMs = 9000) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally { clearTimeout(timer); }
+  return emJson(url, { timeoutMs, headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } });
 }
 
 /* ══════════ 阶段定义（阈值全部显式写在这里） ══════════ */
@@ -350,8 +349,10 @@ export function scoreByStage(stage, f) {
 /* ══════════ 全市场扫描 ══════════ */
 
 let universeCache = { at: 0, items: [] };
+let universeMeta = {source:"eastmoney",coverage:null};
 const UNIVERSE_TTL = 10 * 60 * 1000;
 let scanCache = { at: 0, data: null };
+let scanInFlight = null;
 const SCAN_TTL = 30 * 60 * 1000;
 
 /** 全市场行情快照（价格/涨跌/成交额/换手/流通市值） */
@@ -387,12 +388,24 @@ export async function fetchUniverse() {
       }
     };
     collect(first.rows);
-    for (let s = 2; s <= pages; s += 6) {
+    for (let s = 2; s <= pages; s += 2) {
       const batch = [];
-      for (let p = s; p < s + 6 && p <= pages; p++) batch.push(page(p).catch(() => ({ rows: [] })));
+      for (let p = s; p < s + 2 && p <= pages; p++) batch.push(page(p).catch(() => ({ rows: [] })));
       (await Promise.all(batch)).forEach((r) => collect(r.rows));
+      await new Promise((r) => setTimeout(r, 260));
     }
-  } catch { return universeCache.items; }
+  } catch {
+    try { const alt = await fetchSinaUniverse(); universeMeta = alt; universeCache = {at:Date.now(),items:alt.items}; return alt.items; } catch {}
+    // clist can be intermittently unavailable; fall back to today's limit-up pool.
+    try {
+      const d = new Date();
+      const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+      const j = await emJson(`https://push2ex.eastmoney.com/getTopicZTPool?ut=7eea3edcaed734bea9cbfc24409ed989&dpt=wz.ztzt&Pageindex=0&pagesize=200&sort=lbc%3Adesc&date=${y}${m}${day}`, { timeoutMs: 10000, headers: { 'User-Agent': UA } });
+      const fallback = (j?.data?.pool ?? []).map(x => ({ code:String(x.c||''), name:x.n||'', price:isNum(x.p)?x.p/1000:null, pct:isNum(x.zdp)?x.zdp:null, amount:x.amount||null, turnover:isNum(x.hs)?x.hs:null, pe:null, float_cap:x.ltsz||null })).filter(x=>/^\d{6}$/.test(x.code));
+      if (fallback.length) { universeMeta = {source:'limit_up_pool_only',coverage:null}; universeCache = { at: Date.now(), items: fallback }; return fallback; }
+    } catch {}
+    return universeCache.items;
+  }
   if (items.length) universeCache = { at: Date.now(), items };
   return items;
 }
@@ -416,7 +429,7 @@ async function fetchKlines(codes, lmt = 130) {
           return { date: p[0], open: +p[1], close: +p[2], high: +p[3], low: +p[4], volume: +p[5], amount: +p[6] };
         });
         if (bars.length >= 70) out.set(code, bars);
-      } catch { /* 单只失败跳过 */ }
+      } catch { try { const bars = await fetchTencentBars(code,lmt); if (bars.length>=70) out.set(code,bars); } catch {} }
     }));
   }
   return out;
@@ -426,12 +439,40 @@ async function fetchKlines(codes, lmt = 130) {
  * 扫描：按阶段输出候选
  * @param {{maxPerStage?:number, universeLimit?:number}} opts
  */
-export async function scanMonsters(opts = {}) {
-  const { maxPerStage = 8, universeLimit = 260 } = opts;
-  if (scanCache.data && Date.now() - scanCache.at < SCAN_TTL) return scanCache.data;
 
+const WATCH_PATH = join(process.env.TIANSHI_ROOT || join(homedir(), '.dsh', 'tianshi-data'), 'monster-watch.json');
+function readMonsterWatch() { try { const x = JSON.parse(readFileSync(WATCH_PATH, 'utf8')); return Array.isArray(x) ? x : []; } catch { return []; } }
+function writeMonsterWatch(x) { try { mkdirSync(join(WATCH_PATH, '..'), { recursive: true }); writeFileSync(WATCH_PATH, JSON.stringify(x, null, 2) + '\n'); } catch {} }
+/** Daily snapshot creates a persistent pool; it does not replace existing observations. */
+function updatePotentialWatch(all, now) {
+  const book = readMonsterWatch();
+  const byCode = new Map(book.map(x => [x.code, x]));
+  const current = new Map(all.map(x => [x.code, x]));
+  for (const x of all) {
+    if ((x.potential?.score ?? 0) < 55) continue;
+    const old = byCode.get(x.code);
+    if (!old) byCode.set(x.code, { code:x.code, name:x.name, first_seen:now, initial_score:x.potential.score, current_score:x.potential.score, initial_stage:x.stage_name, status:'watching', history:[] });
+    const w = byCode.get(x.code);
+    w.name=x.name; w.current_score=x.potential.score; w.current_stage=x.stage_name;
+    w.history=(w.history||[]).slice(-29); w.history.push({date:now,score:x.potential.score,stage:x.stage_name,ret60:x.features.ret60});
+    if (x.potential.risks?.some(t => /跌停|退潮|破位|高位/.test(t))) { w.status='risk'; w.status_reason=x.potential.risks.find(t => /跌停|退潮|破位|高位/.test(t)); }
+    else if (x.stage === 'climax') { w.status='climax'; w.status_reason='进入高位风险区'; }
+    else if (w.status === 'risk' && x.stage !== 'climax') { w.status='watching'; w.status_reason='风险信号消退，重新观察'; }
+  }
+  // Do not delete absent names; absence means today no longer in scan sample, not failure.
+  writeMonsterWatch([...byCode.values()].slice(-300));
+  return [...byCode.values()].sort((a,b) => (b.current_score||0)-(a.current_score||0)).slice(0,20);
+}
+export function loadPotentialWatch() { return readMonsterWatch().sort((a,b) => (b.current_score||0)-(a.current_score||0)); }
+
+export async function scanMonsters(opts = {}) {
+  const { maxPerStage = 8, universeLimit = 80 } = opts;
+  if (scanCache.data && Date.now() - scanCache.at < SCAN_TTL) return scanCache.data;
+  if (scanInFlight) return scanInFlight;
+  scanInFlight = (async () => {
   const [uni, indexBars] = await Promise.all([fetchUniverse(), fetchIndexKline()]);
-  if (!uni.length) return { ok: false, error: '全市场名录取数失败' };
+  if (!uni.length) return { ok: false, error: '全市场名录和涨停池都暂不可用' };
+  const degradedUniverse = uni.length < 1000;
 
   // 初筛：可交易、有流动性、价格与盘子符合游资偏好范围
   const base = uni.filter((s) =>
@@ -535,10 +576,11 @@ export async function scanMonsters(opts = {}) {
   const windowActive = monthNow === 11 || monthNow === 12 || monthNow === 1;
 
   const result = {
-    ok: true, scanned: picks.length, universe: uni.length, at: new Date().toISOString(),
+    ok: true, degraded: degradedUniverse || universeMeta.source !== "eastmoney", scan_source: universeMeta.source, scan_coverage: {received:uni.length,expected:universeMeta.expected || null,failed_pages:universeMeta.failed_pages || 0}, scan_diagnostics: {requested:picks.length,valid_klines:klines.size,failed_klines:picks.length-klines.size}, scanned: picks.length, universe: uni.length, at: new Date().toISOString(),
     stages: {}, potential_top: potentialTop, cross_year_top: crossYearTop,
     window_active: windowActive, window_month: monthNow,
     cross_year_rules: CROSS_YEAR_RULES,
+    potential_watch: updatePotentialWatch(all, new Date().toISOString().slice(0,10)),
   };
   for (const key of Object.keys(buckets)) {
     result.stages[key] = {
@@ -549,6 +591,8 @@ export async function scanMonsters(opts = {}) {
   }
   scanCache = { at: Date.now(), data: result };
   return result;
+  })();
+  try { return await scanInFlight; } finally { scanInFlight = null; }
 }
 
 /* ══════════ 跨年妖特征（来自公开统计） ══════════ */

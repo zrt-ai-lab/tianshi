@@ -200,7 +200,7 @@ ${summarizeFacts(facts, card, decision, extras)}
 
 请按以下结构输出 Markdown：
 ## 结论
-（可以买 / 再等等 / 别碰 + 一句话理由）
+（只能写指定档位「${decision?.rule_label || decision?.label || '未给出'}」+一句话理由；禁止改成其他档位）
 ## 三条核心理由
 ## 三条主要风险
 ## 分周期判断

@@ -1,3 +1,5 @@
+import { emJson } from './http.mjs';
+import { fetchSinaIndustries } from './market-fallbacks.mjs';
 /**
  * 板块轮动与资金暗线
  *
@@ -36,22 +38,25 @@ const NOISE_CONCEPTS = [
 ];
 
 async function getPage(fs, pn) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 9000);
-  try {
-    const r = await fetch(
+  {
+    const j = await emJson(
       `https://push2.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=${fs}&fields=${FIELDS}`,
-      { signal: ctrl.signal, headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } },
+      { timeoutMs: 9000, headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } },
     );
-    const j = await r.json();
     return { rows: j?.data?.diff ?? [], total: Number(j?.data?.total) || 0 };
-  } finally { clearTimeout(timer); }
+  }
 }
 
 async function fetchList(fs) {
   const first = await getPage(fs, 1);
   const pages = Math.min(8, Math.ceil(first.total / 100));
-  const rest = await Promise.all(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => getPage(fs, i + 2).catch(() => ({ rows: [] }))));
+  const rest = [];
+  for (let i = 0; i < Math.max(0, pages - 1); i += 2) {
+    const batch = [];
+    for (let j = i; j < i + 2 && j < pages - 1; j++) batch.push(getPage(fs, j + 2).catch(() => ({ rows: [] })));
+    rest.push(...(await Promise.all(batch)));
+    if (i + 2 < pages - 1) await new Promise((r) => setTimeout(r, 240));
+  }
   return [first, ...rest].flatMap((x) => x.rows);
 }
 
@@ -163,7 +168,17 @@ export function summarizeRotation(ind, con) {
 
 /** 拉取并分析行业 + 概念 */
 export async function fetchRotation() {
-  const [indRaw, conRaw] = await Promise.all([fetchList('m:90+t:2'), fetchList('m:90+t:3')]);
+  const [indResult, conResult] = await Promise.allSettled([fetchList('m:90+t:2'), fetchList('m:90+t:3')]);
+  const indRaw = indResult.status === 'fulfilled' ? indResult.value : [];
+  const conRaw = conResult.status === 'fulfilled' ? conResult.value : [];
+  if (!indRaw.length && !conRaw.length) {
+    const boards = await fetchSinaIndustries();
+    if (!boards.length) throw new Error('新浪行业备用接口也没有返回数据');
+    const industry = analyzeRotation(boards), concept = analyzeRotation([]);
+    industry.today.top = boards.slice().sort((a,b)=>b.r1-a.r1).slice(0,6);
+    industry.today.bottom = boards.slice().sort((a,b)=>a.r1-b.r1).slice(0,6);
+    return {ok:true,degraded:true,source:'sina',at:new Date().toISOString(),industry,concept,boards,summary:'东财板块接口当前不可用，已切换新浪行业当日涨跌。5/60日轮动、主力资金与概念缺数据，不生成相关结论。',method:'新浪行业当日涨跌备用源；不替代东财历史轮动和资金口径。'};
+  }
   const industry = dedupeIndustry(indRaw.map((x) => normalizeBoard(x, 'industry')));
   const concept = conRaw.map((x) => normalizeBoard(x, 'concept')).filter((b) => !isNoiseConcept(b.name));
   const ind = analyzeRotation(industry);

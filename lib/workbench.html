@@ -646,6 +646,8 @@
   .ai-report li:last-child{margin-bottom:0}
   .ai-report li::marker{font-family:var(--sans);font-size:11px;color:#7C8CA0;font-weight:500}
   .ai-report strong{font-family:var(--sans);font-weight:600;color:#273E58}
+  .ai-authority{padding:8px 10px;margin-bottom:10px;border-left:3px solid #A87925;border-radius:6px;background:#FFF8E8;color:#6F5323;font-family:var(--sans);font-size:11.5px;line-height:1.5}
+  .ai-authority b{color:#5E4215}
   .stock-actions{flex:none;padding:10px 16px 0;border-top:1px solid var(--border-soft);background:var(--layer);max-height:38vh;overflow-y:auto}
   .stock-actions[hidden]{display:none}
   .stock-actions .card{margin-bottom:10px}
@@ -799,6 +801,14 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13V7.5L8 3l6 4.5V13H10V9.5H6V13Z"/></svg>
           <span>市场概览</span>
         </button>
+        <button type="button" class="nav-item" id="navMainrise">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13 6 9l2.5 2 5.5-7"/><path d="M10 4h4v4"/></svg>
+          <span>主升浪扫描</span>
+        </button>
+        <button type="button" class="nav-item" id="navEarnings">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 12.5V8M6.5 12.5V5.5M10 12.5V7M13 12.5V3"/><path d="M2 13.5h12"/></svg>
+          <span>业绩线扫描</span>
+        </button>
         <button type="button" class="nav-item" id="navDaily">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2" width="10" height="12" rx="2"/><path d="M5.5 6h5M5.5 9h5M5.5 12h3"/></svg>
           <span>每日复盘</span>
@@ -834,6 +844,8 @@
       <div class="chartwrap">
         <div id="portfolioView" style="display:none;position:absolute;inset:0;background:var(--layer);z-index:9;overflow-y:auto"></div>
         <div id="monsterView" style="display:none;position:absolute;inset:0;background:var(--layer);z-index:9;overflow-y:auto"></div>
+        <div id="mainriseView" class="scan-view" style="display:none;position:absolute;inset:0;background:var(--bg);z-index:9;overflow-y:auto"></div>
+        <div id="earningsView" class="scan-view" style="display:none;position:absolute;inset:0;background:var(--bg);z-index:9;overflow-y:auto"></div>
         <div id="dailyView" class="daily-view" style="display:none;position:absolute;inset:0;background:var(--bg);z-index:9;overflow-y:auto"></div>
         <div id="ladderView" style="display:none;position:absolute;inset:0;background:var(--layer);z-index:9;overflow-y:auto"></div>
         <div id="idleCenter" style="display:none;position:absolute;inset:0;background:var(--layer);z-index:8;overflow-y:auto"></div>
@@ -1913,6 +1925,7 @@
     var bPos = mkBtn(pos ? '修改仓位' : '设置仓位');
     var bAlert = mkBtn(alerts.length ? '提醒(' + alerts.length + ')' : '设提醒');
     var bAI = mkBtn('AI 分析', true);
+    bAI.id = 'aiAction';
     actions.appendChild(bPos); actions.appendChild(bAlert); actions.appendChild(bAI);
     host.appendChild(actions);
 
@@ -3148,7 +3161,7 @@
     var host = $('homeMarketSummary');
     if (!host) return;
     var m = marketState;
-    if (!m || !m.ok) { host.textContent = '市场概况正在加载…'; return; }
+    if (!m || !m.ok) { host.textContent = (m && m.__err) ? '市场概况暂不可用：' + m.__err : '市场概况正在加载…'; return; }
     host.replaceChildren();
     var grid = document.createElement('div'); grid.className = 'market-home-grid';
     var breadth = m.breadth || {}, limit = m.limit || {}, amount = m.amount || {}, interp = m.interp || {};
@@ -3210,6 +3223,7 @@
 
   function renderMarketPanel(box) {
     var m = marketState;
+    if (!m || !m.ok) { box.innerHTML = '<div class="warnbox"><b>市场数据暂不可用</b><br>' + ((m && m.__err) || '数据源未返回；请稍后重试') + '</div>'; return false; }
     if (!m || !m.ok) return false;
     var it = m.interp || {};
     var cy = m.cycle;
@@ -3236,6 +3250,8 @@
       }
       block('现在的性质', cy.stage.mean);
       block('该做什么', cy.stage.do, 'var(--fg)');
+      if (cy.stage.opportunities) block('机会窗口', cy.stage.opportunities, 'var(--up)');
+      if (cy.stage.avoid) block('明确禁区', cy.stage.avoid, 'var(--warn)');
       block('盯什么', cy.stage.watch);
 
       if ((cy.evidence || []).length) {
@@ -3706,6 +3722,15 @@
   function paintRotation(host) {
     var r = rotationCache;
     if (!r) return;
+    if (r.degraded && r.source === 'sina') {
+      host.innerHTML = '<div class="rot-head"><b>行业强弱 · 备用来源</b><span class="daily-meta">新浪行业当日涨跌</span></div><div class="rot-sum"></div><div class="rot-grid"></div>';
+      host.querySelector('.rot-sum').textContent = r.summary;
+      var grid = host.querySelector('.rot-grid');
+      [['当日较强',r.industry.today.top],['当日较弱',r.industry.today.bottom]].forEach(function(pair) {
+        var card = document.createElement('section'); card.className='rot-card';var heading=document.createElement('h4');heading.textContent=pair[0];card.appendChild(heading);
+        pair[1].forEach(function(b){var row=document.createElement('div');row.className='rot-item';var name=document.createElement('span');name.className='n';name.textContent=b.name;var value=document.createElement('b');value.className=b.r1>0?'up':'down';value.textContent=(b.r1>0?'+':'')+b.r1.toFixed(2)+'%';row.append(name,value);card.appendChild(row);});grid.appendChild(card);
+      });return;
+    }
     var d = rotScope === 'concept' ? r.concept : r.industry;
     var q = d.quadrants, m = d.money;
     var f1 = function (v) { return v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%'; };
@@ -4044,8 +4069,8 @@
       '<div><div style="font-size:16px;font-weight:650">妖股扫描</div>' +
       '<div style="font-size:10.5px;color:var(--cap);margin-top:3px">全市场 ' + (r.universe || 0) + ' 只中取样 ' + (r.scanned || 0) + ' 只 · ' + W + '</div></div>' +
       '<div style="margin-left:auto;font-size:10px;color:var(--cap)">妖股潜质 = 当前强度；跨年妖 = 日历窗口 + 历史五特征，两者不是一回事</div></div>';
-    var tabs = '<div style="display:flex;gap:8px;padding:12px 26px 0">' +
-      [['potential', '妖股潜质榜'], ['crossyear', '跨年妖候选'], ['stages', '阶段扫描']].map(function (t) {
+    var tabs = '<div style="display:flex;gap:8px;padding:12px 26px 0;flex-wrap:wrap">' +
+      [['potential', '今日强度榜'], ['watch', '潜力观察池'], ['crossyear', '跨年妖候选'], ['stages', '阶段扫描']].map(function (t) {
         var on = t[0] === tab;
         return '<button class="chip" data-tab="' + t[0] + '" data-on="' + (on ? 1 : 0) + '" ' +
           'style="height:27px;padding:0 13px;font-size:11px;border:1px solid ' + (on ? 'var(--fg)' : 'var(--border)') + ';' +
@@ -4053,6 +4078,7 @@
       }).join('') + '</div>';
 
     var body = '<div style="padding:14px 26px 30px">';
+    if (r.degraded) body += '<div class="warnbox">备用扫描来源：' + dailyEscape(r.scan_source || '未知') + '；收到 ' + (r.universe || 0) + ' 只，实际请求K线 ' + (r.scanned || 0) + ' 只，有效K线 ' + (r.scan_diagnostics ? r.scan_diagnostics.valid_klines : '—') + ' 只。缺少数据的维度不代表零；本次结果不等同于完整市场覆盖。</div>';
     if (tab === 'potential') {
       body += '<div class="dc-note">当前强度排序。高位不影响潜质分，风险单独标注——强就是强，能不能买是另一回事。</div>';
       body += (r.potential_top || []).map(function (x, i) {
@@ -4082,6 +4108,19 @@
           ((x.potential.risks || []).length ? '<div class="mv-risk">' + (x.potential.risks || []).slice(0, 2).map(function (t) { return '! ' + t; }).join('　') + '</div>' : '') +
           '</div>';
       }).join('');
+    } else if (tab === 'watch') {
+      body += '<div class="dc-note">这是固定跟踪池，不会因为今天没进强度榜就消失。分数会更新，入池日期与状态保留；“缺席”不等于失败。</div>';
+      body += '<div id="watchPoolBox"><div class="ld-head"><span class="spin"></span><b>正在读取历史观察池</b></div></div>';
+      api('/monster-watch').then(function (wr) {
+        var wb = v.querySelector('#watchPoolBox'); if (!wb) return;
+        var items = (wr && wr.ok ? wr.items : []) || [];
+        wb.innerHTML = items.length ? items.map(function (x) {
+          var status = x.status === 'risk' ? '风险' : x.status === 'climax' ? '高位' : '观察中';
+          var col = x.status === 'risk' || x.status === 'climax' ? 'var(--warn)' : 'var(--up)';
+          return '<div class="mv-row clickable" data-code="' + x.code + '"><div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:13px;font-weight:600">' + x.name + '</span><span style="font-size:10px;color:var(--cap)">' + x.code + '</span><span style="font-size:10px;color:' + col + '">' + status + '</span><span style="margin-left:auto;font-weight:700;color:' + col + '">当前 ' + x.current_score + '</span></div><div class="mv-meta"><span>入池 ' + x.first_seen + '</span><span>初始 ' + x.initial_score + '</span><span>当前阶段 ' + (x.current_stage || '—') + '</span><span>更新 ' + ((x.history || []).length) + ' 次</span></div>' + (x.status_reason ? '<div class="mv-risk">! ' + x.status_reason + '</div>' : '') + '</div>';
+        }).join('') : '<div class="empty">还没有固定观察池。当天强度榜中达到门槛的标的，会在扫描后自动进入观察池。</div>';
+        Array.prototype.forEach.call(wb.querySelectorAll('[data-code]'), function (row) { row.addEventListener('click', function () { setView('market'); load(row.getAttribute('data-code')); }); });
+      }).catch(function () {});
     } else if (tab === 'crossyear') {
       var rules = r.cross_year_rules || {};
       var legacyRules = !r.cross_year_rules;
@@ -4326,6 +4365,7 @@
       if (!p || !p.ok) { rightEmpty('取数失败：' + ((p && p.error) || '未知错误')); return; }
       clearInterval(ldStepTimer);
       state.card = p;
+      if ($('smartDiagnose')) $('smartDiagnose').disabled = false;
       renderQuote(p);
       renderRight(p);
       renderStockActions(p);
@@ -4576,12 +4616,15 @@
   async function runAI(symbol, box, btn) {
     box.classList.add('ai-report');
     box.style.color = '';
+    var decisionForAi = state.card && state.card.decision ? state.card.decision : null;
+    box.innerHTML = '<div class="ai-authority"><b>规则引擎档位：</b>' + ((decisionForAi && (decisionForAi.rule_label || decisionForAi.label)) || '已由规则引擎计算') + '<br>AI只解释依据，不改综合分、风险等级或最终档位。</div><span style="color:var(--cap)">正在准备…</span>';
     btn.disabled = true;
     btn.innerHTML = '<span class="spin" style="margin-right:6px"></span>分析中…';
     btn.style.opacity = '.7';
-    box.innerHTML = '<span style="color:var(--cap)">正在准备…</span>';
+    if (!box.querySelector('.ai-authority')) box.innerHTML = '<span style="color:var(--cap)">正在准备…</span>';
     var acc = '';
     var streamError = '';
+    var authority = '<div class="ai-authority"><b>规则引擎档位：</b>' + ((decisionForAi && (decisionForAi.rule_label || decisionForAi.label)) || '已由规则引擎计算') + '<br>AI只解释依据，不改综合分、风险等级或最终档位。</div>';
     try {
       var myPos = getPosition(symbol);
       var qs = myPos ? '&cost=' + myPos.cost + '&qty=' + myPos.qty : '';
@@ -4602,22 +4645,22 @@
           var msg;
           try { msg = JSON.parse(raw.slice(6)); } catch (e) { continue; }
           if (msg.type === 'status') {
-            box.innerHTML = '<span class="spin" style="margin-right:6px"></span><span style="color:var(--fg3)">' + msg.text + '</span>';
+            box.innerHTML = authority + '<span class="spin" style="margin-right:6px"></span><span style="color:var(--fg3)">' + msg.text + '</span>';
           } else if (msg.type === 'delta') {
             acc += msg.text;
-            box.innerHTML = mdLite(acc) + '<span style="opacity:.45">▍</span>';
+            box.innerHTML = authority + mdLite(acc) + '<span style="opacity:.45">▍</span>';
           } else if (msg.type === 'error' || (msg.type === 'finish' && msg.reason && msg.reason.kind === 'error')) {
             var failure = msg.reason && (msg.reason.failure || msg.reason);
             streamError = msg.error || (failure && failure.message) || '模型调用失败';
-            box.textContent = '分析失败：' + streamError;
+            box.innerHTML = authority + '<p class="warnbox">分析失败：' + streamError + '</p>';
             box.style.color = 'var(--warn)';
           } else if (msg.type === 'done') {
             if (acc && !streamError) box.innerHTML = mdLite(acc);
           }
         }
       }
-      if (streamError) { box.innerHTML = (acc ? mdLite(acc) : '') + '<p class="warnbox"></p>'; box.lastElementChild.textContent = '生成中断，报告不完整：' + streamError; }
-      else if (acc) box.innerHTML = mdLite(acc);
+      if (streamError) { box.innerHTML = authority + (acc ? mdLite(acc) : '') + '<p class="warnbox">生成中断，报告不完整：' + streamError + '</p>'; }
+      else if (acc) box.innerHTML = authority + mdLite(acc);
       else if (!streamError) box.textContent = '模型连接已结束，但未返回分析正文。请点击重新生成；若持续失败，请检查当前模型服务状态。';
     } catch (e) {
       box.innerHTML = '<span style="color:var(--up)">请求失败：' + (e && e.message ? e.message : e) + '</span>';
@@ -4871,6 +4914,13 @@
     } catch (e) {}
     var brandHome = $('brandHome');
     if (brandHome) brandHome.addEventListener('click', function () { setView('market'); idle(); });
+    var smart = $('smartDiagnose');
+    if (smart) smart.addEventListener('click', function () {
+      if (!state.symbol || !state.card) { toast('先搜索或选择一只股票'); return; }
+      var ai = document.querySelector('#stockActions #aiAction');
+      if (ai) { ai.click(); return; }
+      setView('market'); load(state.symbol);
+    });
     applyZoom(storeGet('zoom', 100));
     $('zoomIn').addEventListener('click', function () { applyZoom((storeGet('zoom', 100)) + 10); });
     $('zoomOut').addEventListener('click', function () { applyZoom((storeGet('zoom', 100)) - 10); });
@@ -4901,6 +4951,19 @@
     });
   }
 
+  var scanViewCache = {};
+  function renderScanView(kind) {
+    var host = $(kind === 'mainrise' ? 'mainriseView' : 'earningsView'); if (!host) return;
+    var title = kind === 'mainrise' ? '主升浪扫描' : '业绩线扫描';
+    var subtitle = kind === 'mainrise' ? '趋势确立 + 放量 + 相对强度 + 资金确认，单独标出高位风险。' : '营收、净利、ROE、毛利和估值交叉核对；业绩好不等于股价便宜。';
+    host.innerHTML = '<div class="daily-wrap view-enter"><div class="daily-toolbar"><h2>' + title + '</h2><button id="scanRefresh">重新扫描</button></div><div class="daily-lead">正在从全市场筛选'+subtitle+'<br><span class="daily-meta">扫描结果是当前条件筛选，不是次日上涨预测；缺数据不计入评分。</span></div><div id="scanBody"><div class="daily-grid">'+[1,2,3].map(function(){return '<div class="daily-card"><div class="row-skel" style="width:55%;margin-bottom:10px"></div><div class="row-skel" style="width:90%;margin-bottom:8px"></div><div class="row-skel" style="width:70%"></div></div>';}).join('')+'</div></div></div>';
+    var body=host.querySelector('#scanBody');
+    function draw(r){if(!r||!r.ok){body.innerHTML='<div class="warnbox">扫描失败：'+((r&&r.error)||'数据不可用')+'</div>';return;}var list=kind==='mainrise'?r.mainrise:r.earnings;body.innerHTML='<div class="daily-meta">扫描 '+r.universe+' 只，符合条件 '+list.length+' 只；数据时点 '+r.at+(r.degraded?'；当前为降级覆盖':'')+'</div><div class="daily-grid">'+list.map(function(x){var c=x.scan;return '<div class="daily-card clickable" data-code="'+x.code+'"><div style="display:flex;align-items:baseline;gap:8px"><b>'+x.name+'</b><span class="daily-meta">'+x.code+'</span><strong style="margin-left:auto;color:'+(c.score>=70?'var(--up)':'var(--warn)')+'">'+c.score+'</strong></div><div class="daily-row"><span>'+c.stage+'</span><span>'+ (x.features?.ret60==null?'—':'60日 '+x.features.ret60+'%') +'</span></div><p>'+c.reasons.slice(0,3).join('；')+'</p>'+(c.risks.length?'<div class="daily-meta down">! '+c.risks.join('；')+'</div>':'')+'</div>';}).join('')+'</div>';}
+    var prom=api('/scan?kind='+kind).then(draw).catch(function(e){body.innerHTML='<div class="warnbox">扫描失败：'+e.message+'</div>';});
+    host.querySelector('#scanRefresh').onclick=function(){prom=api('/scan?kind='+kind+'&refresh=1').then(draw).catch(function(e){body.innerHTML='<div class="warnbox">扫描失败：'+e.message+'</div>';});};
+    host.addEventListener('click',function(e){var c=e.target.closest('[data-code]');if(c){setView('market');load(c.dataset.code);}});
+  }
+
   var dailyData = null;
   var dailyRequest = 0;
   function dailyEscape(x) { return String(x == null ? '—' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -4929,28 +4992,64 @@
     var observations=[];
     if(cycle.stage)observations.push('市场处于'+cycle.stage.name+'，'+(cycle.confidence==='low'?'信号仍有分歧':'需结合量能与宽度观察'));
     if(ladder.promotion_read)observations.push(ladder.promotion_read);
+    var med5=rotation.industry&&rotation.industry.medians?rotation.industry.medians.r5:null;
+    var med60=rotation.industry&&rotation.industry.medians?rotation.industry.medians.r60:null;
+    var rebound=rotation.industry&&rotation.industry.quadrants?rotation.industry.quadrants.rebound.count:0;
+    var strong=rotation.industry&&rotation.industry.quadrants?rotation.industry.quadrants.strong.count:0;
+    var nextTone=cycle.stage&&['主升期','高潮期'].includes(cycle.stage.name)&&strong>=3?'偏强条件':cycle.stage&&cycle.stage.name==='退潮期'?'偏弱条件':'震荡待确认';
+    var shortContext = '近5日行业中位 ' + (med5 == null ? '—' : (med5 > 0 ? '+' : '') + med5 + '%') + '，近60日中位 ' + (med60 == null ? '—' : (med60 > 0 ? '+' : '') + med60 + '%') + '；超跌反弹 ' + rebound + ' 个，持续强势 ' + strong + ' 个。';
     var archives=dailyArchives();
     var html='<div class="daily-wrap view-enter"><div class="daily-toolbar"><h2>每日复盘</h2><select id="dailyHistory" aria-label="选择复盘快照"><option value="">当前盘面</option>'+archives.map(function(x,i){return '<option value="'+i+'">'+esc(x.date)+' · '+esc(new Date(x.fetchedAt).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}))+'</option>';}).join('')+'</select><button id="dailyRefresh">更新盘面</button><button id="dailySave">保存此刻快照</button></div>';
     html+='<div class="daily-meta" id="dailyStatus">'+(archived?'历史快照 · 不随实时行情改写':'当前观察 · 不是收盘定论')+'｜行情/梯队日期 '+esc(date)+'｜汇总时间 '+esc(generated)+'｜各接口可能使用缓存，非同一瞬时成交快照</div>';
-    html+='<div class="daily-lead">'+esc(observations.length?observations.join('；'):'部分数据尚未取得，请先检查来源状态。')+'</div>';
-    html+='<div class="daily-grid"><section class="daily-card"><h3>01 市场环境</h3>';
+    html+='<div class="daily-lead"><b>今日结论：'+esc(nextTone)+'</b><br>'+esc(observations.length?observations.join('；'):'部分数据尚未取得，请先检查来源状态。')+'<br><span class="daily-meta">'+esc(shortContext)+'</span></div>';
+    html+='<div class="daily-grid"><section class="daily-card"><h3>01 指数与市场宽度</h3>';
     (market.indices||[]).slice(0,4).forEach(function(x){html+='<div class="daily-row"><span>'+esc(x.name)+'</span><b class="'+(x.pct>0?'up':x.pct<0?'down':'flat')+'">'+esc(x.pct)+'%</b></div>';});
-    html+='<p>上涨 '+esc(breadth.up)+' / 下跌 '+esc(breadth.down)+'；涨停 '+esc(limit.up)+' / 跌停 '+esc(limit.down)+'；炸板率 '+esc(limit.broken_rate)+'%。</p></section>';
-    html+='<section class="daily-card"><h3>02 梯队与接力</h3><p>'+esc(ladder.promotion_read||'梯队来源缺失，不能判定接力状态')+'</p>';
+    html+='<p>上涨 '+esc(breadth.up)+' / 下跌 '+esc(breadth.down)+'，上涨占比 '+esc(breadth.up_ratio)+'%；涨停 '+esc(limit.up)+'，跌停 '+esc(limit.down)+'，炸板率 '+esc(limit.broken_rate)+'%。</p></section>';
+    html+='<section class="daily-card"><h3>02 情绪周期与量能</h3><div class="daily-row"><span>周期</span><b>' + esc(cycle.stage?.name || '—') + '</b></div><div class="daily-row"><span>置信度</span><b>' + esc(cycle.confidence || '—') + '</b></div><div class="daily-row"><span>成交量能</span><b>' + esc(market.amount?.sh_change_pct == null ? '—' : (market.amount.sh_change_pct > 0 ? '+' : '') + market.amount.sh_change_pct + '%') + '</b></div><p>' + esc((cycle.contradictions || []).join('；') || '暂无主要矛盾信号') + '</p></section>';
+    html+='<section class="daily-card"><h3>03 市场环境</h3>';
+ '<p><strong>机会窗口：</strong>'+esc(cycle.stage?.opportunities || '数据不足，不能生成机会判断')+'</p>' + '<p><strong>明确禁区：</strong>'+esc(cycle.stage?.avoid || '数据不足，不能生成禁区判断')+'</p></section>';
+    html+='<section class="daily-card"><h3>04 连板梯队与接力</h3><p>'+esc(ladder.promotion_read||'梯队来源缺失，不能判定接力状态')+'</p>';
     (ld.promotion||[]).forEach(function(p){html+='<div class="daily-row"><span>'+p.from_board+' → '+(p.from_board+1)+'</span><span>'+esc(p.promoted)+' / '+esc(p.prev_count)+' 晋级 · '+esc(p.rate)+'%</span></div>';});
     html+='<p class="daily-meta">这些是已发生的晋级，不是明日概率。盘中未封住与收盘断板不同。</p></section>';
-    html+='<section class="daily-card"><h3>03 行业与题材</h3><p>'+esc(rotation.summary||'轮动来源缺失')+'</p>';
+    html+='<section class="daily-card"><h3>05 行业、概念与轮动</h3><p>'+esc(rotation.summary||'轮动来源缺失')+'</p>';
     (ladder.concept_ladders||ladder.sector_ladders||[]).slice(0,5).forEach(function(g){html+='<div class="daily-row"><span>'+esc(g.industry)+'</span><span>'+g.count+'只涨停 · 最高'+g.max_boards+'板</span></div>';});
-    html+='</section><section class="daily-card"><h3>04 资金与风险线索</h3>';
+    html+='</section><section class="daily-card"><h3>06 资金、ETF与风险线索</h3>';
     var money=rotation.industry&&rotation.industry.money;
-    if(money){html+='<p><strong>资金先行观察：</strong>'+esc((money.lead.items||[]).slice(0,3).map(function(b){return b.name;}).join('、')||'暂无符合条件的板块')+'</p><p><strong>上涨但大单净流出：</strong>'+esc((money.distribute.items||[]).slice(0,3).map(function(b){return b.name;}).join('、')||'暂无符合条件的板块')+'</p>';}
-    else html+='<p>资金来源缺失，不生成资金判断。</p>';
+    if(money){
+      var hasMoney = Array.isArray(money.inflow) && money.inflow.length && money.inflow.some(function(b){return b.main5 != null || b.main5_ratio != null;});
+      var leadText = (money.lead.items||[]).slice(0,3).map(function(b){return b.name;}).join('、');
+      var distText = (money.distribute.items||[]).slice(0,3).map(function(b){return b.name;}).join('、');
+      html+='<p><strong>资金先行观察：</strong>'+esc(hasMoney ? (leadText || '当前没有达到阈值的板块') : '主力资金字段不可用，未生成资金暗线')+'</p>';
+      html+='<p><strong>上涨但大单净流出：</strong>'+esc(hasMoney ? (distText || '当前没有达到阈值的板块') : '主力资金字段不可用，未生成资金暗线')+'</p>';
+    } else html+='<p>主力资金字段不可用，未生成资金暗线。</p>';
     html+='<p class="daily-meta">主力口径按成交金额分类，无法识别真实持有人或证明吸筹/出货。</p></section></div>';
-    html+='<section class="daily-card"><h3>下一交易时段：核对条件，不猜涨跌</h3><ul><li>涨停扩散和炸板率是否同步改善，龙头走强能否带动后排。</li><li>领涨题材是否连续扩散，行业强势与个股承接是否一致。</li><li>资金与价格背离是否持续，避免把一天的信号当趋势。</li></ul></section>';
+    html+='<section class="daily-card"><h3>07 明日与未来3—5日：条件情景</h3><div class="daily-row"><b>明日偏强</b><span>涨停扩散、炸板率下降、空间板晋级且强势板块继续领先</span></div><div class="daily-row"><b>明日偏弱</b><span>空间板断板、中位梯队继续断层、拉高派发板块增加</span></div><div class="daily-row"><b>未来3—5日修复</b><span>超跌反弹行业出现连续性，资金先行板块转为价格跟随，宽度改善</span></div><div class="daily-row"><b>未来3—5日退潮</b><span>高位回落扩散，主力净流出与跌停增加，板块反弹不能站稳</span></div><p class="daily-meta">这些是可验证的条件路径，不是“明天涨跌”预测；条件未出现就不提前替它下结论。</p></section>';
+    html+='<section class="daily-card"><h3>08 观察池个股趋势</h3><div id="dailyWatchStocks"><div class="daily-meta">正在读取自选/持仓的近5日与近20日表现…</div></div><p class="daily-meta">个股只展示真实区间表现与阶段，不把历史涨跌包装成明日预测。</p></section>';
+    html+='<section class="daily-card"><h3>09 数据完整性</h3><div class="daily-row"><span>大盘行情</span><b>'+esc(market.ok===false?'不可用':'已取到')+'</b></div><div class="daily-row"><span>板块轮动</span><b>'+esc(rotation.ok===false?'不可用':(rotation.degraded?'备用来源':'已取到'))+'</b></div><div class="daily-row"><span>连板梯队</span><b>'+esc(ladder.ok===false?'不可用':(ladder.ladder?'已取到':'缺失'))+'</b></div><p class="daily-meta">缺失数据不会被当作零，也不会生成对应判断；来源和时点以各模块提示为准。</p></section>';
     html+='<section class="daily-card"><h3>我的复盘笔记</h3><textarea id="dailyNote" class="daily-note" placeholder="记录今天的判断、执行偏差，以及下一交易时段要验证的条件。"></textarea><p class="daily-meta">保存快照时一起保存；记录仍在本机浏览器，端口变化可能使历史暂不可见。</p></section>';
     if(data.errors&&data.errors.length)html+='<div class="warnbox">'+data.errors.map(esc).join('<br>')+'</div>';
     html+='</div>';host.innerHTML=html;
     host.querySelector('#dailyNote').value=data.note||'';
+    var posMap = storeGet('positions', {});
+    var nameMap = {};
+    watch.forEach(function(x){ if(x.code) nameMap[x.code] = x.name || x.code; });
+    Object.keys(posMap).forEach(function(code){ if(!nameMap[code]) nameMap[code] = posMap[code].name || ''; });
+    var watchCodes = [...Object.keys(posMap), ...watch.map(function(x){return x.code;})].filter(function(x,i,a){return x && a.indexOf(x)===i;}).slice(0,12);
+    var wsBox=host.querySelector('#dailyWatchStocks');
+    function drawDailyStocks(rows){
+      if(!wsBox)return;
+      wsBox.innerHTML=rows.map(function(row){var bars=row.k&&row.k.ok?row.k.bars:[];var label=row.name||row.sym;
+        if(!row.k||!row.k.ok)return '<div class="daily-row"><button data-daily-stock="'+row.sym+'">'+label+' <small>'+row.sym+'</small></button><span class="down">K线来源失败，未生成趋势</span></div>';
+        if(bars.length<21)return '<div class="daily-row"><button data-daily-stock="'+row.sym+'">'+label+' <small>'+row.sym+'</small></button><span>历史K线不足21根</span></div>';
+        var c=bars.map(function(x){return x.close;});var r5=(c[c.length-1]/c[c.length-6]-1)*100,r20=(c[c.length-1]/c[c.length-21]-1)*100,cls=r5>0?'up':r5<0?'down':'flat';
+        return '<div class="daily-row"><button data-daily-stock="'+row.sym+'">'+label+' <small>'+row.sym+'</small></button><span>5日 <b class="'+cls+'">'+(r5>0?'+':'')+r5.toFixed(1)+'%</b> · 20日 '+(r20>0?'+':'')+r20.toFixed(1)+'%</span></div>';}).join('');
+      wsBox.querySelectorAll('[data-daily-stock]').forEach(function(b){b.onclick=function(){setView('market');load(b.dataset.dailyStock);};});
+    }
+    if(watchCodes.length){Promise.all(watchCodes.map(function(sym){return api('/kline?symbol='+encodeURIComponent(sym)+'&lmt=60').then(function(k){return {sym:sym,name:nameMap[sym],k:k};}).catch(function(){return {sym:sym,name:nameMap[sym],k:null};});})).then(function(rows){
+      var unknown=rows.filter(function(x){return !x.name;});
+      if(!unknown.length)return drawDailyStocks(rows);
+      Promise.all(unknown.map(function(x){return api('/search?q='+encodeURIComponent(x.sym)).then(function(r){var hit=(r.items||[]).find(function(y){return y.code===x.sym});if(hit)x.name=hit.name;return x;}).catch(function(){return x;});})).then(function(){drawDailyStocks(rows);});
+    });}else wsBox.innerHTML='<div class="daily-meta">尚未设置自选或持仓。</div>';
     host.querySelector('#dailyRefresh').onclick=function(){var note=host.querySelector('#dailyNote').value;renderDailyReview(true);if(dailyData)dailyData.note=note;};
     host.querySelector('#dailySave').onclick=function(){
       var snapshot=JSON.parse(JSON.stringify(data));snapshot.note=host.querySelector('#dailyNote').value;snapshot.date=date;
@@ -4964,7 +5063,7 @@
   var navSeq = 0;
 
   function markNav(v) {
-    var navMap = { market: 'navHome', daily: 'navDaily', ladder: 'navLadder', monsters: 'navMonster', portfolio: 'navPortfolio' };
+    var navMap = { market: 'navHome', mainrise: 'navMainrise', earnings: 'navEarnings', daily: 'navDaily', ladder: 'navLadder', monsters: 'navMonster', portfolio: 'navPortfolio' };
     Object.keys(navMap).forEach(function (k) {
       var n = $(navMap[k]);
       if (n) n.setAttribute('data-on', k === v ? '1' : '0');
@@ -5002,16 +5101,20 @@
     markNav(v);
     var mv = $('monsterView');
     var pv = $('portfolioView');
-    var daily = $('dailyView');
+    var daily = $('dailyView'), mainrise = $('mainriseView'), earnings = $('earningsView');
     if (daily) daily.style.display = v === 'daily' ? 'block' : 'none';
+    if (mainrise) mainrise.style.display = v === 'mainrise' ? 'block' : 'none';
+    if (earnings) earnings.style.display = v === 'earnings' ? 'block' : 'none';
     var lvv = $('ladderView');
     if (mv) mv.style.display = v === 'monsters' ? 'block' : 'none';
     if (pv) pv.style.display = v === 'portfolio' ? 'block' : 'none';
     if (lvv) lvv.style.display = v === 'ladder' ? 'block' : 'none';
-    if (v === 'monsters' || v === 'portfolio' || v === 'ladder' || v === 'daily') {
+    if (v === 'monsters' || v === 'portfolio' || v === 'ladder' || v === 'daily' || v === 'mainrise' || v === 'earnings') {
       hideIdleCenter();
       leaveStock();
-      if (v === 'daily') renderDailyReview();
+      if (v === 'mainrise') renderScanView('mainrise');
+      else if (v === 'earnings') renderScanView('earnings');
+      else if (v === 'daily') renderDailyReview();
       else if (v === 'monsters') renderMonsterView();
       else if (v === 'ladder') renderLadderView();
       else renderPortfolio();
@@ -5441,6 +5544,8 @@
   if ($('navHome')) $('navHome').addEventListener('click', function () { setView('market'); idle(); });
   if ($('backHome')) $('backHome').addEventListener('click', function () { setView('market'); idle(); });
   if ($('navMonster')) $('navMonster').addEventListener('click', function () { setView('monsters'); });
+  if ($('navMainrise')) $('navMainrise').addEventListener('click', function () { setView('mainrise'); });
+  if ($('navEarnings')) $('navEarnings').addEventListener('click', function () { setView('earnings'); });
   if ($('navDaily')) $('navDaily').addEventListener('click', function () { setView('daily'); });
   if ($('navLadder')) $('navLadder').addEventListener('click', function () { setView('ladder'); });
   if ($('navPortfolio')) $('navPortfolio').addEventListener('click', function () { setView('portfolio'); });
@@ -5448,12 +5553,16 @@
     var vq = new URLSearchParams(location.search).get('view');
     if (vq === 'portfolio') setView('portfolio');
     else if (vq === 'monsters') { window.__wantMonsters = true; }
+    else if (vq === 'mainrise') { window.__wantMainrise = true; }
+    else if (vq === 'earnings') { window.__wantEarnings = true; }
     else if (vq === 'daily') { window.__wantDaily = true; }
     else if (vq === 'ladder') { window.__wantLadder = true; }
   } catch (e) {}
   loadMarket().then(function () {
     hideBoot();
     if (window.__wantMonsters) setTimeout(function () { setView('monsters'); }, 30);
+    if (window.__wantMainrise) setTimeout(function () { setView('mainrise'); }, 30);
+    if (window.__wantEarnings) setTimeout(function () { setView('earnings'); }, 30);
     if (window.__wantDaily) setTimeout(function () { setView('daily'); }, 30);
     if (window.__wantLadder) setTimeout(function () { setView('ladder'); }, 30);
   }).catch(function () {
